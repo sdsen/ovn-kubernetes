@@ -146,20 +146,21 @@ func (oc *Controller) upgradeToSingleSwitchOVNTopology(existingNodeList *kapi.No
 		}
 	}
 
-	nodeSwitches, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading", "--format=csv",
-		"--columns=name", "find", "logical_switch")
+	lsStruct, err := oc.ovnNBClient.LSList()
 	if err != nil {
-		return fmt.Errorf("failed to get all logical switches for upgrade: stderr: %q, error: %v",
-			stderr, err)
+		return fmt.Errorf("failed to get all logical switches for upgrade: error: %v",
+			err)
 	}
 
 	logicalNodes := make(map[string]bool)
-	for _, switchName := range strings.Split(nodeSwitches, "\n") {
+
+	for _, lsEntry := range lsStruct {
 		// We are interested only in the join_* switches
-		if !strings.HasPrefix(switchName, "join_") {
+		if !strings.HasPrefix(lsEntry.Name, "join_") {
 			continue
 		}
-		nodeName := strings.TrimPrefix(switchName, "join_")
+		// We are interested only in the join_* switches
+		nodeName := strings.TrimPrefix(lsEntry.Name, "join_")
 		logicalNodes[nodeName] = true
 	}
 
@@ -911,7 +912,6 @@ func (oc *Controller) allocateNodeSubnets(node *kapi.Node) ([]*net.IPNet, []*net
 		klog.Infof("Allocated Subnets %v on Node %s", hostSubnets, node.Name)
 		return hostSubnets, allocatedSubnets, nil
 	}
-
 	// Node doesn't have the expected subnets annotated
 	// it may happen it has more subnets assigned that configured in OVN
 	// like in a dual-stack to single-stack conversion
