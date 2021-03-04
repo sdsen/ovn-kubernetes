@@ -1252,38 +1252,44 @@ func (oc *Controller) syncNodes(nodes []interface{}) {
 	for nodeName := range foundNodes {
 		delete(chassisMap, nodeName)
 	}
+	/*
+		nodeSwitches, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading",
+			"--format=csv", "--columns=name,other-config", "find", "logical_switch")
+		if err != nil {
+			klog.Errorf("Failed to get node logical switches: stderr: %q, error: %v",
+				stderr, err)
+			return
+		}
+	*/
 
-	nodeSwitches, stderr, err := util.RunOVNNbctl("--data=bare", "--no-heading",
-		"--format=csv", "--columns=name,other-config", "find", "logical_switch")
+	lsList, err := oc.ovnNBClient.LSList()
 	if err != nil {
-		klog.Errorf("Failed to get node logical switches: stderr: %q, error: %v",
-			stderr, err)
+		klog.Errorf("Failed to get all logical switches for upgrade: error: %v",
+			err)
 		return
 	}
+	fmt.Printf("IRL here is the call: [%v]\n", lsList)
 
 	// find node logical switches which have other-config value set
-	for _, result := range strings.Split(nodeSwitches, "\n") {
-		// Split result into name and other-config
-		items := strings.Split(result, ",")
-		if len(items) != 2 || len(items[0]) == 0 {
+	for _, lsEntry := range lsList {
+		// If no other-config continue
+		if len(lsEntry.OtherConfig) == 0 {
 			continue
 		}
-		nodeName := items[0]
+		nodeName := lsEntry.Name
 		if _, ok := foundNodes[nodeName]; ok {
 			// node still exists, no cleanup to do
 			continue
 		}
 
+		fmt.Printf("IRL nodeName: %s other-attributes:%v\n", nodeName, lsEntry.OtherConfig)
 		var subnets []*net.IPNet
-		attrs := strings.Fields(items[1])
-		for _, attr := range attrs {
+		for attrKey, attrVal := range lsEntry.OtherConfig {
 			var subnet *net.IPNet
-			if strings.HasPrefix(attr, "subnet=") {
-				subnetStr := strings.TrimPrefix(attr, "subnet=")
-				_, subnet, _ = net.ParseCIDR(subnetStr)
-			} else if strings.HasPrefix(attr, "ipv6_prefix=") {
-				prefixStr := strings.TrimPrefix(attr, "ipv6_prefix=")
-				_, subnet, _ = net.ParseCIDR(prefixStr + "/64")
+			if attrKey == "subnet" {
+				_, subnet, _ = net.ParseCIDR(attrVal.(string))
+			} else if attrKey == "ipv6_prefix" {
+				_, subnet, _ = net.ParseCIDR(attrVal.(string) + "/64")
 			}
 			if subnet != nil {
 				subnets = append(subnets, subnet)
@@ -1292,6 +1298,8 @@ func (oc *Controller) syncNodes(nodes []interface{}) {
 		if len(subnets) == 0 {
 			continue
 		}
+
+		fmt.Printf("IRL Subnets: %v\n", subnets)
 
 		if err := oc.deleteNode(nodeName, subnets, nil); err != nil {
 			klog.Error(err)
